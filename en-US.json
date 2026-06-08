@@ -1,24 +1,22 @@
 {
-  "messages": {
-    "app.title": {
-      "message": "Image to Frame",
-      "description": "The title of the application shown in Canva."
-    },
-    "app.description": {
-      "message": "Turn transparent PNG mockups and frames into native drag-and-drop Canva Frames instantly.",
-      "description": "Short description of what the app does."
-    },
-    "app.button.choose_file": {
-      "message": "Choose file",
-      "description": "Label for the button that opens the file picker to upload an image."
-    },
-    "app.text.instructions": {
-      "message": "Upload an image to create a custom frame.",
-      "description": "Instructional text shown above the upload button."
-    },
-    "app.text.max_size": {
-      "message": "Maximum file size: 3MB",
-      "description": "Informational text about file upload limits."
-    }
+  "app.title": {
+    "defaultMessage": "Image to Frame",
+    "description": "The title of the application shown in Canva."
+  },
+  "app.description": {
+    "defaultMessage": "Turn transparent PNG mockups and frames into native drag-and-drop Canva Frames instantly.",
+    "description": "Short description of what the app does."
+  },
+  "app.button.choose_file": {
+    "defaultMessage": "Choose file",
+    "description": "Label for the button that opens the file picker to upload an image."
+  },
+  "app.text.instructions": {
+    "defaultMessage": "Upload an image to create a custom frame.",
+    "description": "Instructional text shown above the upload button."
+  },
+  "app.text.max_size": {
+    "defaultMessage": "Maximum file size: 3MB",
+    "description": "Informational text about file upload limits."
   }
 }
