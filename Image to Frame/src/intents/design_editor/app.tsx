@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Button, Rows, Text } from "@canva/app-ui-kit";
+import { Button, Rows, Text, Alert } from "@canva/app-ui-kit";
 import { addElementAtCursor, addElementAtPoint } from "@canva/design";
 import { upload } from "@canva/asset";
 import { useFeatureSupport } from "@canva/app-hooks";
@@ -30,7 +30,7 @@ export const App = () => {
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Gagal memproses gambar.");
+        if (!ctx) throw new Error("Failed to process image. Try uploading a different PNG file.");
         
         ctx.drawImage(img, 0, 0);
         const imgd = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -152,19 +152,41 @@ export const App = () => {
         }
         
         if (paths.length === 0) {
-          throw new Error("Tidak ada area transparan (lubang) yang terdeteksi pada gambar.");
+          throw new Error("No transparent area (hole) detected. Please ensure your PNG image has a fully transparent area in the center to create the frame.");
         }
         
         if (totalLength > 2000) {
-          throw new Error("Gambar terlalu kompleks! (Path SVG > 2KB).");
+          throw new Error("Image is too complex (SVG path too large). Please simplify the transparent shape edges and try again.");
         }
         
+        // 1b. Generate a small thumbnail to prevent SDK/Backend conflicts
+        const thumbCanvas = document.createElement("canvas");
+        const MAX_THUMB_SIZE = 400;
+        let thumbW = img.naturalWidth;
+        let thumbH = img.naturalHeight;
+        if (thumbW > thumbH) {
+          if (thumbW > MAX_THUMB_SIZE) {
+            thumbH *= MAX_THUMB_SIZE / thumbW;
+            thumbW = MAX_THUMB_SIZE;
+          }
+        } else {
+          if (thumbH > MAX_THUMB_SIZE) {
+            thumbW *= MAX_THUMB_SIZE / thumbH;
+            thumbH = MAX_THUMB_SIZE;
+          }
+        }
+        thumbCanvas.width = thumbW;
+        thumbCanvas.height = thumbH;
+        const thumbCtx = thumbCanvas.getContext("2d");
+        thumbCtx?.drawImage(img, 0, 0, thumbW, thumbH);
+        const thumbUrl = thumbCanvas.toDataURL("image/jpeg", 0.7);
+
         // 3. Upload Original Asset to Canva
         const asset = await upload({
           type: "image",
           mimeType: "image/png",
           url: dataUrl,
-          thumbnailUrl: dataUrl,
+          thumbnailUrl: thumbUrl,
           aiDisclosure: "none",
         });
         await asset.whenUploaded();
@@ -200,7 +222,7 @@ export const App = () => {
           });
         }
       } catch (err: any) {
-        setErrorMsg(err.message || "Gagal mengonversi gambar.");
+        setErrorMsg(err.message || "Failed to convert the image. Please verify your image is a valid PNG with transparency.");
       } finally {
         URL.revokeObjectURL(url);
         setLoading(false);
@@ -209,7 +231,7 @@ export const App = () => {
     
     img.onerror = () => {
       setLoading(false);
-      setErrorMsg("Format gambar tidak didukung.");
+      setErrorMsg("Image format not supported. Please ensure you upload a valid PNG image.");
       URL.revokeObjectURL(url);
     };
     
@@ -248,9 +270,7 @@ export const App = () => {
         </Rows>
         
         {errorMsg && (
-          <div style={{ color: "red", fontSize: "12px" }}>
-            {errorMsg}
-          </div>
+          <Alert tone="critical">{errorMsg}</Alert>
         )}
       </Rows>
     </div>
