@@ -21,14 +21,16 @@ export const App = () => {
   // AI to Frame state
   const [aiPrompt, setAiPrompt] = useState("");
 
-  const generateSvgFromImageData = (imgd: ImageData, maxPaths: number) => {
-    const svgStr = ImageTracer.imagedataToSVG(imgd, { 
+  const generateSvgFromImageData = (imgd: ImageData, maxPaths: number, tracerOptions?: any) => {
+    const defaultOptions = { 
       ltres: 3,
       qtres: 3,
       pathomit: 20,
       numberofcolors: 2, 
       scale: 1 
-    });
+    };
+    const options = { ...defaultOptions, ...tracerOptions };
+    const svgStr = ImageTracer.imagedataToSVG(imgd, options);
     
     const parser = new DOMParser();
     const doc = parser.parseFromString(svgStr, "image/svg+xml");
@@ -136,61 +138,31 @@ export const App = () => {
       ctx.putImageData(imgd, 0, 0);
       
       // Extract SVG paths (allow more paths for complex AI shapes)
-      const { paths, totalLength } = generateSvgFromImageData(imgd, 40);
+      const { paths, totalLength } = generateSvgFromImageData(imgd, 60, {
+        ltres: 0.1,
+        qtres: 0.1,
+        pathomit: 5
+      });
 
       if (paths.length === 0) {
         throw new Error("No clear shape could be identified from the AI generation. Try a simpler prompt.");
       }
-      if (totalLength > 4000) {
+      if (totalLength > 15000) {
         throw new Error("Generated shape is too complex. Try adding words like 'simple' or 'minimal' to your prompt.");
       }
 
-      const dataUrl = canvas.toDataURL("image/png");
-
-      const thumbCanvas = document.createElement("canvas");
-      const MAX_THUMB_SIZE = 400;
-      thumbCanvas.width = MAX_THUMB_SIZE;
-      thumbCanvas.height = Math.floor(MAX_THUMB_SIZE * (height/width));
-      const thumbCtx = thumbCanvas.getContext("2d");
-      thumbCtx?.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
-      const thumbUrl = thumbCanvas.toDataURL("image/jpeg", 0.7);
-
-      const asset = await upload({
-        type: "image",
-        mimeType: "image/png",
-        url: dataUrl,
-        thumbnailUrl: thumbUrl,
-        aiDisclosure: "app_generated", // Disclose AI generation to Canva!
-      });
-      await asset.whenUploaded();
-
       if (addElement) {
         addElement({
-          type: "group",
-          children: [
-            {
-              type: "image",
-              ref: asset.ref,
-              width: width,
-              height: height,
-              top: 0,
-              left: 0,
-            },
-            {
-              type: "shape",
-              paths: paths,
-              viewBox: {
-                height: height,
-                width: width,
-                left: 0,
-                top: 0,
-              },
-              width: width,
-              height: height,
-              top: 0,
-              left: 0,
-            }
-          ],
+          type: "shape",
+          paths: paths,
+          viewBox: {
+            height: height,
+            width: width,
+            left: 0,
+            top: 0,
+          },
+          width: width,
+          height: height,
         });
       }
     } catch (err: any) {
