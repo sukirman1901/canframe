@@ -1,11 +1,19 @@
 import React, { useRef, useState } from "react";
-import { Button, Rows, Text, Alert } from "@canva/app-ui-kit";
+import { Button, Rows, Text, Alert, TextInput, Select, SegmentedControl, FormField } from "@canva/app-ui-kit";
 import { addElementAtCursor, addElementAtPoint } from "@canva/design";
 import { upload } from "@canva/asset";
 import { useFeatureSupport } from "@canva/app-hooks";
 import * as styles from "styles/components.css";
 // @ts-ignore
 import ImageTracer from "imagetracerjs";
+
+const FONTS = [
+  { value: 'Impact, sans-serif', label: 'Impact' },
+  { value: 'Arial, sans-serif', label: 'Arial' },
+  { value: '"Courier New", monospace', label: 'Courier' },
+  { value: 'Georgia, serif', label: 'Georgia' },
+  { value: '"Times New Roman", serif', label: 'Times New Roman' },
+];
 
 export const App = () => {
   const isSupported = useFeatureSupport();
@@ -16,6 +24,153 @@ export const App = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [activeTab, setActiveTab] = useState<"image" | "text">("image");
+
+  // Text-to-Frame state
+  const [textContent, setTextContent] = useState("FRAME");
+  const [fontFamily, setFontFamily] = useState(FONTS[0].value);
+
+  const generateSvgFromImageData = (imgd: ImageData, maxPaths: number) => {
+    const svgStr = ImageTracer.imagedataToSVG(imgd, { 
+      ltres: 3,
+      qtres: 3,
+      pathomit: 20,
+      numberofcolors: 2, 
+      scale: 1 
+    });
+    
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgStr, "image/svg+xml");
+    const pathElements = doc.querySelectorAll("path");
+    
+    const paths = [];
+    let totalLength = 0;
+    
+    for (let i = 1; i < pathElements.length; i++) {
+      let d = pathElements[i].getAttribute("d");
+      if (d) {
+        d = d.replace(/Q\s+[-.\d]+\s+[-.\d]+\s+([-.\d]+)\s+([-.\d]+)/gi, 'L $1 $2');
+        const subPaths = d.split(/(?=[Mm])/).filter(p => p.trim() !== "");
+        
+        for (const subPath of subPaths) {
+          if (paths.length >= maxPaths) break;
+          paths.push({
+            d: subPath.trim(),
+            fill: {
+              dropTarget: true,
+            },
+          });
+          totalLength += subPath.length;
+        }
+      }
+      if (paths.length >= maxPaths) break;
+    }
+    return { paths, totalLength };
+  };
+
+  const processText = async () => {
+    if (!textContent.trim()) {
+      setErrorMsg("Please enter some text.");
+      return;
+    }
+
+    setLoading(true);
+    setErrorMsg("");
+
+    try {
+      const width = 1200;
+      const height = 400;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Failed to initialize canvas.");
+
+      // Fill background with white
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, width, height);
+
+      // Draw black text
+      ctx.fillStyle = "#000000";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      
+      let baseSize = 250;
+      ctx.font = `bold ${baseSize}px ${fontFamily}`;
+      const textMetrics = ctx.measureText(textContent);
+      if (textMetrics.width > width - 100) {
+         const scale = (width - 100) / textMetrics.width;
+         ctx.font = `bold ${Math.floor(baseSize * scale)}px ${fontFamily}`;
+      }
+
+      ctx.fillText(textContent, width / 2, height / 2 + 20); // slightly adjust baseline
+
+      const imgd = ctx.getImageData(0, 0, width, height);
+      
+      // Extract SVG paths (allow more paths for letters)
+      const { paths, totalLength } = generateSvgFromImageData(imgd, 60);
+
+      if (paths.length === 0) {
+        throw new Error("No shapes could be generated from this text.");
+      }
+      if (totalLength > 4000) {
+        throw new Error("Text is too complex (SVG path too large). Please try a shorter word.");
+      }
+
+      const dataUrl = canvas.toDataURL("image/png");
+
+      const thumbCanvas = document.createElement("canvas");
+      const MAX_THUMB_SIZE = 400;
+      thumbCanvas.width = MAX_THUMB_SIZE;
+      thumbCanvas.height = Math.floor(MAX_THUMB_SIZE * (height/width));
+      const thumbCtx = thumbCanvas.getContext("2d");
+      thumbCtx?.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+      const thumbUrl = thumbCanvas.toDataURL("image/jpeg", 0.7);
+
+      const asset = await upload({
+        type: "image",
+        mimeType: "image/png",
+        url: dataUrl,
+        thumbnailUrl: thumbUrl,
+        aiDisclosure: "none",
+      });
+      await asset.whenUploaded();
+
+      if (addElement) {
+        addElement({
+          type: "group",
+          children: [
+            {
+              type: "image",
+              ref: asset.ref,
+              width: width,
+              height: height,
+              top: 0,
+              left: 0,
+            },
+            {
+              type: "shape",
+              paths: paths,
+              viewBox: {
+                height: height,
+                width: width,
+                left: 0,
+                top: 0,
+              },
+              width: width,
+              height: height,
+              top: 0,
+              left: 0,
+            }
+          ],
+        });
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to convert text to frame.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const processImage = async (file: File) => {
     setLoading(true);
@@ -36,7 +191,6 @@ export const App = () => {
         const imgd = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL("image/png");
         
-        // 1. Isolate inner transparent holes using BFS Flood Fill
         const width = canvas.width;
         const height = canvas.height;
         const numPixels = width * height;
@@ -53,7 +207,6 @@ export const App = () => {
         let head = 0;
         let tail = 0;
         
-        // Enqueue boundary pixels
         for (let x = 0; x < width; x++) {
           const topIdx = x;
           const bottomIdx = (height - 1) * width + x;
@@ -75,7 +228,6 @@ export const App = () => {
           }
         }
 
-        // BFS
         while (head < tail) {
           const idx = queue[head++];
           const x = idx % width;
@@ -99,7 +251,6 @@ export const App = () => {
           }
         }
 
-        // Apply Colors: Only Inner Transparent gets painted Black (to trace)
         for (let i = 0; i < numPixels; i++) {
           const dataIdx = i * 4;
           if (isTransparent[i] && !outerTransparent[i]) {
@@ -115,41 +266,7 @@ export const App = () => {
           }
         }
         
-        // 2. Trace using ImageTracer
-        const svgStr = ImageTracer.imagedataToSVG(imgd, { 
-          ltres: 3,
-          qtres: 3,
-          pathomit: 20,
-          numberofcolors: 2, 
-          scale: 1 
-        });
-        
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(svgStr, "image/svg+xml");
-        const pathElements = doc.querySelectorAll("path");
-        
-        const paths = [];
-        let totalLength = 0;
-        
-        for (let i = 1; i < pathElements.length; i++) {
-          let d = pathElements[i].getAttribute("d");
-          if (d) {
-            d = d.replace(/Q\s+[-.\d]+\s+[-.\d]+\s+([-.\d]+)\s+([-.\d]+)/gi, 'L $1 $2');
-            const subPaths = d.split(/(?=[Mm])/).filter(p => p.trim() !== "");
-            
-            for (const subPath of subPaths) {
-              if (paths.length >= 30) break;
-              paths.push({
-                d: subPath.trim(),
-                fill: {
-                  dropTarget: true,
-                },
-              });
-              totalLength += subPath.length;
-            }
-          }
-          if (paths.length >= 30) break;
-        }
+        const { paths, totalLength } = generateSvgFromImageData(imgd, 30);
         
         if (paths.length === 0) {
           throw new Error("No transparent area (hole) detected. Please ensure your PNG image has a fully transparent area in the center to create the frame.");
@@ -159,7 +276,6 @@ export const App = () => {
           throw new Error("Image is too complex (SVG path too large). Please simplify the transparent shape edges and try again.");
         }
         
-        // 1b. Generate a small thumbnail to prevent SDK/Backend conflicts
         const thumbCanvas = document.createElement("canvas");
         const MAX_THUMB_SIZE = 400;
         let thumbW = img.naturalWidth;
@@ -181,7 +297,6 @@ export const App = () => {
         thumbCtx?.drawImage(img, 0, 0, thumbW, thumbH);
         const thumbUrl = thumbCanvas.toDataURL("image/jpeg", 0.7);
 
-        // 3. Upload Original Asset to Canva
         const asset = await upload({
           type: "image",
           mimeType: "image/png",
@@ -191,7 +306,6 @@ export const App = () => {
         });
         await asset.whenUploaded();
         
-        // 4. Group Element: Image (Mockup) underneath, Shape (Frame) on top
         if (addElement) {
           addElement({
             type: "group",
@@ -247,28 +361,78 @@ export const App = () => {
   return (
     <div className={styles.scrollContainer}>
       <Rows spacing="3u">
-        <Text>Upload an image to create a custom mockup frame.</Text>
-        
-        <input 
-          type="file" 
-          accept="image/png" 
-          ref={fileInputRef} 
-          style={{ display: "none" }} 
-          onChange={handleFileChange} 
+        <SegmentedControl
+          value={activeTab}
+          onChange={(val) => {
+            setActiveTab(val as "image" | "text");
+            setErrorMsg("");
+          }}
+          options={[
+            { value: "image", label: "Image to Frame" },
+            { value: "text", label: "Text to Frame" }
+          ]}
         />
         
-        <Rows spacing="1u">
-          <Button
-            variant="secondary"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!addElement || loading}
-            stretch
-          >
-            {loading ? "Processing..." : "Choose file"}
-          </Button>
-          <Text size="small" tone="neutral">Maximum file size: 3MB</Text>
-        </Rows>
-        
+        {activeTab === "image" && (
+          <Rows spacing="3u">
+            <Text>Upload an image to create a custom mockup frame.</Text>
+            <input 
+              type="file" 
+              accept="image/png" 
+              ref={fileInputRef} 
+              style={{ display: "none" }} 
+              onChange={handleFileChange} 
+            />
+            <Rows spacing="1u">
+              <Button
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!addElement || loading}
+                stretch
+              >
+                {loading ? "Processing..." : "Choose file"}
+              </Button>
+              <Text size="small" tone="neutral">Maximum file size: 3MB</Text>
+            </Rows>
+          </Rows>
+        )}
+
+        {activeTab === "text" && (
+          <Rows spacing="3u">
+            <Text>Type a word to create a custom text frame.</Text>
+            <FormField
+              label="Text Content"
+              control={(props) => (
+                <TextInput
+                  {...props}
+                  value={textContent}
+                  onChange={(val) => setTextContent(val)}
+                  maxLength={15}
+                />
+              )}
+            />
+            <FormField
+              label="Font Style"
+              control={(props) => (
+                <Select
+                  {...props}
+                  value={fontFamily}
+                  options={FONTS}
+                  onChange={(val) => setFontFamily(val)}
+                />
+              )}
+            />
+            <Button
+              variant="primary"
+              onClick={processText}
+              disabled={!addElement || loading || !textContent.trim()}
+              stretch
+            >
+              {loading ? "Generating..." : "Generate Text Frame"}
+            </Button>
+          </Rows>
+        )}
+
         {errorMsg && (
           <Alert tone="critical">{errorMsg}</Alert>
         )}
