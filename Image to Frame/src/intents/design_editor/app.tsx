@@ -1,19 +1,11 @@
 import React, { useRef, useState } from "react";
-import { Button, Rows, Text, Alert, TextInput, Select, SegmentedControl, FormField } from "@canva/app-ui-kit";
+import { Button, Rows, Text, Alert, TextInput, SegmentedControl, FormField } from "@canva/app-ui-kit";
 import { addElementAtCursor, addElementAtPoint } from "@canva/design";
 import { upload } from "@canva/asset";
 import { useFeatureSupport } from "@canva/app-hooks";
 import * as styles from "styles/components.css";
 // @ts-ignore
 import ImageTracer from "imagetracerjs";
-
-const FONTS = [
-  { value: 'Impact, sans-serif', label: 'Impact' },
-  { value: 'Arial, sans-serif', label: 'Arial' },
-  { value: '"Courier New", monospace', label: 'Courier' },
-  { value: 'Georgia, serif', label: 'Georgia' },
-  { value: '"Times New Roman", serif', label: 'Times New Roman' },
-];
 
 export const App = () => {
   const isSupported = useFeatureSupport();
@@ -24,11 +16,10 @@ export const App = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [activeTab, setActiveTab] = useState<"image" | "text">("image");
+  const [activeTab, setActiveTab] = useState<"image" | "ai">("image");
 
-  // Text-to-Frame state
-  const [textContent, setTextContent] = useState("FRAME");
-  const [fontFamily, setFontFamily] = useState(FONTS[0].value);
+  // AI to Frame state
+  const [aiPrompt, setAiPrompt] = useState("");
 
   const generateSvgFromImageData = (imgd: ImageData, maxPaths: number) => {
     const svgStr = ImageTracer.imagedataToSVG(imgd, { 
@@ -68,9 +59,9 @@ export const App = () => {
     return { paths, totalLength };
   };
 
-  const processText = async () => {
-    if (!textContent.trim()) {
-      setErrorMsg("Please enter some text.");
+  const processAIPrompt = async () => {
+    if (!aiPrompt.trim()) {
+      setErrorMsg("Please enter a prompt to generate a shape.");
       return;
     }
 
@@ -78,43 +69,80 @@ export const App = () => {
     setErrorMsg("");
 
     try {
-      const width = 1200;
-      const height = 400;
+      const engineeredPrompt = `${aiPrompt.trim()} shape, solid black silhouette on pure solid white background, flat vector style, no details, isolated, minimal`;
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(engineeredPrompt)}?width=800&height=800&nologo=true`;
+
+      // Fetch the image
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error("AI generation failed. Please try again.");
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Failed to load AI image."));
+        img.src = objectUrl;
+      });
+
+      const width = img.naturalWidth;
+      const height = img.naturalHeight;
       const canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Failed to initialize canvas.");
 
-      // Fill background with white
-      ctx.fillStyle = "#FFFFFF";
-      ctx.fillRect(0, 0, width, height);
+      // Draw the AI image
+      ctx.drawImage(img, 0, 0);
 
-      // Draw black text
-      ctx.fillStyle = "#000000";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      
-      let baseSize = 250;
-      ctx.font = `bold ${baseSize}px ${fontFamily}`;
-      const textMetrics = ctx.measureText(textContent);
-      if (textMetrics.width > width - 100) {
-         const scale = (width - 100) / textMetrics.width;
-         ctx.font = `bold ${Math.floor(baseSize * scale)}px ${fontFamily}`;
-      }
-
-      ctx.fillText(textContent, width / 2, height / 2 + 20); // slightly adjust baseline
+      // Clean up object URL
+      URL.revokeObjectURL(objectUrl);
 
       const imgd = ctx.getImageData(0, 0, width, height);
+      const numPixels = width * height;
+
+      // Thresholding: Make dark pixels pitch black, bright pixels solid white
+      for (let i = 0; i < numPixels; i++) {
+        const dataIdx = i * 4;
+        const r = imgd.data[dataIdx];
+        const g = imgd.data[dataIdx + 1];
+        const b = imgd.data[dataIdx + 2];
+        
+        // Calculate luminance
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        
+        // If luminance is dark, make it our black shape to trace
+        if (luminance < 128) {
+          imgd.data[dataIdx] = 0;
+          imgd.data[dataIdx + 1] = 0;
+          imgd.data[dataIdx + 2] = 0;
+          imgd.data[dataIdx + 3] = 255;
+        } else {
+          // Otherwise, make it solid white background
+          imgd.data[dataIdx] = 255;
+          imgd.data[dataIdx + 1] = 255;
+          imgd.data[dataIdx + 2] = 255;
+          imgd.data[dataIdx + 3] = 255;
+        }
+      }
+
+      // Put the thresholded image back to canvas to upload as the mask image
+      ctx.putImageData(imgd, 0, 0);
       
-      // Extract SVG paths (allow more paths for letters)
-      const { paths, totalLength } = generateSvgFromImageData(imgd, 60);
+      // Extract SVG paths (allow more paths for complex AI shapes)
+      const { paths, totalLength } = generateSvgFromImageData(imgd, 40);
 
       if (paths.length === 0) {
-        throw new Error("No shapes could be generated from this text.");
+        throw new Error("No clear shape could be identified from the AI generation. Try a simpler prompt.");
       }
       if (totalLength > 4000) {
-        throw new Error("Text is too complex (SVG path too large). Please try a shorter word.");
+        throw new Error("Generated shape is too complex. Try adding words like 'simple' or 'minimal' to your prompt.");
       }
 
       const dataUrl = canvas.toDataURL("image/png");
@@ -132,7 +160,7 @@ export const App = () => {
         mimeType: "image/png",
         url: dataUrl,
         thumbnailUrl: thumbUrl,
-        aiDisclosure: "none",
+        aiDisclosure: "generated", // Disclose AI generation to Canva!
       });
       await asset.whenUploaded();
 
@@ -166,7 +194,7 @@ export const App = () => {
         });
       }
     } catch (err: any) {
-      setErrorMsg(err.message || "Failed to convert text to frame.");
+      setErrorMsg(err.message || "Failed to generate AI frame.");
     } finally {
       setLoading(false);
     }
@@ -364,18 +392,18 @@ export const App = () => {
         <SegmentedControl
           value={activeTab}
           onChange={(val) => {
-            setActiveTab(val as "image" | "text");
+            setActiveTab(val as "image" | "ai");
             setErrorMsg("");
           }}
           options={[
             { value: "image", label: "Image to Frame" },
-            { value: "text", label: "Text to Frame" }
+            { value: "ai", label: "AI to Frame" }
           ]}
         />
         
         {activeTab === "image" && (
           <Rows spacing="3u">
-            <Text>Upload an image to create a custom mockup frame.</Text>
+            <Text>Upload a transparent PNG to create a mockup frame.</Text>
             <input 
               type="file" 
               accept="image/png" 
@@ -397,38 +425,28 @@ export const App = () => {
           </Rows>
         )}
 
-        {activeTab === "text" && (
+        {activeTab === "ai" && (
           <Rows spacing="3u">
-            <Text>Type a word to create a custom text frame.</Text>
+            <Text>Describe a shape (e.g. "Cat", "Star") and AI will generate it as a custom frame.</Text>
             <FormField
-              label="Text Content"
+              label="Shape Idea"
               control={(props) => (
                 <TextInput
                   {...props}
-                  value={textContent}
-                  onChange={(val) => setTextContent(val)}
-                  maxLength={15}
-                />
-              )}
-            />
-            <FormField
-              label="Font Style"
-              control={(props) => (
-                <Select
-                  {...props}
-                  value={fontFamily}
-                  options={FONTS}
-                  onChange={(val) => setFontFamily(val)}
+                  value={aiPrompt}
+                  onChange={(val) => setAiPrompt(val)}
+                  placeholder="E.g., Heart, Star, Coffee cup..."
+                  maxLength={50}
                 />
               )}
             />
             <Button
               variant="primary"
-              onClick={processText}
-              disabled={!addElement || loading || !textContent.trim()}
+              onClick={processAIPrompt}
+              disabled={!addElement || loading || !aiPrompt.trim()}
               stretch
             >
-              {loading ? "Generating..." : "Generate Text Frame"}
+              {loading ? "Generating AI Frame..." : "Generate AI Frame"}
             </Button>
           </Rows>
         )}
