@@ -160,7 +160,7 @@ export const App = () => {
         mimeType: "image/png",
         url: dataUrl,
         thumbnailUrl: thumbUrl,
-        aiDisclosure: "generated", // Disclose AI generation to Canva!
+        aiDisclosure: "app_generated", // Disclose AI generation to Canva!
       });
       await asset.whenUploaded();
 
