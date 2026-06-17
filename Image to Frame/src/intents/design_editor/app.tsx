@@ -163,6 +163,8 @@ export const App = () => {
           },
           width: width,
           height: height,
+          top: 0,
+          left: 0,
         });
       }
     } catch (err: any) {
